@@ -1992,11 +1992,23 @@ typedef struct sg_desc {
     const void* d3d11_device_context;
     const void* (*d3d11_render_target_view_cb)(void);
     const void* (*d3d11_depth_stencil_view_cb)(void);
+    void* context_userdata;
     uint32_t _end_canary;
 } sg_desc;
 
+typedef struct sg_context_desc {
+    uint32_t _start_canary;
+    const void* (*mtl_renderpass_descriptor_cb)(void);
+    const void* (*mtl_drawable_cb)(void);
+    const void* (*d3d11_render_target_view_cb)(void);
+    const void* (*d3d11_depth_stencil_view_cb)(void);
+    void* context_userdata;
+    uint32_t _end_canary;
+} sg_context_desc;
+
 /* setup and misc functions */
-SOKOL_API_DECL void sg_setup(const sg_desc* desc);
+/* returns the default context (keep ?) */
+SOKOL_API_DECL sg_context sg_setup(const sg_desc* desc);
 SOKOL_API_DECL void sg_shutdown(void);
 SOKOL_API_DECL bool sg_isvalid(void);
 SOKOL_API_DECL void sg_reset_state_cache(void);
@@ -2075,8 +2087,9 @@ SOKOL_API_DECL void sg_fail_pipeline(sg_pipeline pip_id);
 SOKOL_API_DECL void sg_fail_pass(sg_pass pass_id);
 
 /* rendering contexts (optional) */
-SOKOL_API_DECL sg_context sg_setup_context(void);
+SOKOL_API_DECL sg_context sg_setup_context(const sg_context_desc* desc);
 SOKOL_API_DECL void sg_activate_context(sg_context ctx_id);
+SOKOL_API_DECL void* sg_active_context_userdata(void); /* ? */
 SOKOL_API_DECL void sg_discard_context(sg_context ctx_id);
 
 #ifdef _MSC_VER
@@ -2750,6 +2763,11 @@ typedef struct {
 
 typedef struct {
     _sg_slot_t slot;
+
+    const void* (*d3d11_render_target_view_cb)(void);
+    const void* (*d3d11_depth_stencil_view_cb)(void);
+    void* context_userdata;
+
 } _sg_context_t;
 
 typedef struct {
@@ -2758,6 +2776,7 @@ typedef struct {
     ID3D11DeviceContext* ctx;
     const void* (*rtv_cb)(void);
     const void* (*dsv_cb)(void);
+    void *context_userdata; /* ? */
     bool in_pass;
     bool use_indexed_draw;
     int cur_width;
@@ -3167,6 +3186,7 @@ typedef struct {
 } _sg_state_t;
 static _sg_state_t _sg;
 
+
 /*-- helper functions --------------------------------------------------------*/
 
 _SOKOL_PRIVATE bool _sg_strempty(const _sg_str_t* str) {
@@ -3266,7 +3286,7 @@ _SOKOL_PRIVATE bool _sg_is_compressed_pixel_format(sg_pixel_format fmt) {
         case SG_PIXELFORMAT_ETC2_RGB8A1:
         case SG_PIXELFORMAT_ETC2_RGBA8:
         case SG_PIXELFORMAT_ETC2_RG11:
-        case SG_PIXELFORMAT_ETC2_RG11SN:        
+        case SG_PIXELFORMAT_ETC2_RG11SN:
             return true;
         default:
             return false;
@@ -3373,7 +3393,7 @@ _SOKOL_PRIVATE int _sg_row_pitch(sg_pixel_format fmt, int width) {
         case SG_PIXELFORMAT_BC7_RGBA:
         case SG_PIXELFORMAT_ETC2_RGBA8:
         case SG_PIXELFORMAT_ETC2_RG11:
-        case SG_PIXELFORMAT_ETC2_RG11SN:        
+        case SG_PIXELFORMAT_ETC2_RG11SN:
             pitch = ((width + 3) / 4) * 16;
             pitch = pitch < 16 ? 16 : pitch;
             break;
@@ -3417,7 +3437,7 @@ _SOKOL_PRIVATE int _sg_surface_pitch(sg_pixel_format fmt, int width, int height)
         case SG_PIXELFORMAT_ETC2_RGB8A1:
         case SG_PIXELFORMAT_ETC2_RGBA8:
         case SG_PIXELFORMAT_ETC2_RG11:
-        case SG_PIXELFORMAT_ETC2_RG11SN:        
+        case SG_PIXELFORMAT_ETC2_RG11SN:
         case SG_PIXELFORMAT_BC2_RGBA:
         case SG_PIXELFORMAT_BC3_RGBA:
         case SG_PIXELFORMAT_BC5_RG:
@@ -3552,9 +3572,10 @@ _SOKOL_PRIVATE void _sg_reset_state_cache(void) {
     /* empty*/
 }
 
-_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx) {
+_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx, const sg_context_desc* desc) {
     SOKOL_ASSERT(ctx);
     _SOKOL_UNUSED(ctx);
+    _SOKOL_UNUSED(desc);
     return SG_RESOURCESTATE_VALID;
 }
 
@@ -5054,9 +5075,10 @@ _SOKOL_PRIVATE void _sg_activate_context(_sg_context_t* ctx) {
 }
 
 /*-- GL backend resource creation and destruction ----------------------------*/
-_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx) {
+_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx, const sg_context_desc* desc) {
     SOKOL_ASSERT(ctx);
     SOKOL_ASSERT(0 == ctx->default_framebuffer);
+    _SOKOL_UNUSED(desc);
     _SG_GL_CHECK_ERROR();
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, (GLint*)&ctx->default_framebuffer);
     _SG_GL_CHECK_ERROR();
@@ -6720,9 +6742,11 @@ _SOKOL_PRIVATE void _sg_activate_context(_sg_context_t* ctx) {
     _sg_reset_state_cache();
 }
 
-_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx) {
+_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx, const sg_context_desc* desc) {
     SOKOL_ASSERT(ctx);
-    _SOKOL_UNUSED(ctx);
+    ctx->d3d11_render_target_view_cb = desc->d3d11_render_target_view_cb;
+    ctx->d3d11_depth_stencil_view_cb = desc->d3d11_depth_stencil_view_cb;
+    ctx->context_userdata = desc->context_userdata;
     return SG_RESOURCESTATE_VALID;
 }
 
@@ -7488,6 +7512,10 @@ _SOKOL_PRIVATE void _sg_begin_pass(_sg_pass_t* pass, const sg_pass_action* actio
     }
     else {
         /* render to default frame buffer */
+        /* FIXME: when should the (rtv+dsv)-callbacks be invoked ?
+         * _sg_activate_context ?
+         *
+         */
         _sg.d3d11.cur_pass = 0;
         _sg.d3d11.cur_pass_id.id = SG_INVALID_ID;
         _sg.d3d11.num_rtvs = 1;
@@ -8530,9 +8558,10 @@ _SOKOL_PRIVATE void _sg_reset_state_cache(void) {
     _sg_mtl_clear_state_cache();
 }
 
-_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx) {
+_SOKOL_PRIVATE sg_resource_state _sg_create_context(_sg_context_t* ctx, const sg_context_desc*) {
     SOKOL_ASSERT(ctx);
     _SOKOL_UNUSED(ctx);
+    _SOKOL_UNUSED(desc);
     return SG_RESOURCESTATE_VALID;
 }
 
@@ -10839,7 +10868,7 @@ _SOKOL_PRIVATE void _sg_init_pass(sg_pass pass_id, const sg_pass_desc* desc) {
 }
 
 /*== PUBLIC API FUNCTIONS ====================================================*/
-SOKOL_API_IMPL void sg_setup(const sg_desc* desc) {
+SOKOL_API_IMPL sg_context sg_setup(const sg_desc* desc) {
     SOKOL_ASSERT(desc);
     SOKOL_ASSERT((desc->_start_canary == 0) && (desc->_end_canary == 0));
     memset(&_sg, 0, sizeof(_sg));
@@ -10859,7 +10888,13 @@ SOKOL_API_IMPL void sg_setup(const sg_desc* desc) {
     _sg.frame_index = 1;
     _sg_setup_backend(&_sg.desc);
     _sg.valid = true;
-    sg_setup_context();
+    return sg_setup_context(&(sg_context_desc) {
+        .mtl_renderpass_descriptor_cb = _sg.desc.mtl_renderpass_descriptor_cb,
+        .mtl_drawable_cb = _sg.desc.mtl_drawable_cb,
+        .d3d11_render_target_view_cb = _sg.desc.d3d11_render_target_view_cb,
+        .d3d11_depth_stencil_view_cb = _sg.desc.d3d11_depth_stencil_view_cb,
+        .context_userdata = _sg.desc.context_userdata
+    });
 }
 
 SOKOL_API_IMPL void sg_shutdown(void) {
@@ -10910,14 +10945,17 @@ SOKOL_API_IMPL sg_pixelformat_info sg_query_pixelformat(sg_pixel_format fmt) {
     return _sg.formats[fmt_index];
 }
 
-SOKOL_API_IMPL sg_context sg_setup_context(void) {
+SOKOL_API_IMPL sg_context sg_setup_context(const sg_context_desc* desc) {
     SOKOL_ASSERT(_sg.valid);
+    SOKOL_ASSERT((desc->_start_canary == 0) && (desc->_end_canary == 0));
+
     sg_context res;
     int slot_index = _sg_pool_alloc_index(&_sg.pools.context_pool);
+    _SOKOL_UNUSED(desc);
     if (_SG_INVALID_SLOT_INDEX != slot_index) {
         res.id = _sg_slot_alloc(&_sg.pools.context_pool, &_sg.pools.contexts[slot_index].slot, slot_index);
         _sg_context_t* ctx = _sg_context_at(&_sg.pools, res.id);
-        ctx->slot.state = _sg_create_context(ctx);
+        ctx->slot.state = _sg_create_context(ctx, desc);
         SOKOL_ASSERT(ctx->slot.state == SG_RESOURCESTATE_VALID);
         _sg_activate_context(ctx);
     }
@@ -10948,6 +10986,15 @@ SOKOL_API_IMPL void sg_activate_context(sg_context ctx_id) {
     _sg_context_t* ctx = _sg_lookup_context(&_sg.pools, ctx_id.id);
     /* NOTE: ctx can be 0 here if the context is no longer valid */
     _sg_activate_context(ctx);
+}
+
+SOKOL_API_IMPL void *sg_active_context_userdata(void) {
+#if defined(SOKOL_D3D11)
+    _sg_context_t* ctx = _sg_lookup_context(&_sg.pools, _sg.active_context.id);
+    return ctx ? ctx->context_userdata : 0;
+#else
+    return 0;
+#endif
 }
 
 SOKOL_API_IMPL sg_trace_hooks sg_install_trace_hooks(const sg_trace_hooks* trace_hooks) {
